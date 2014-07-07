@@ -4,14 +4,15 @@ import re
 class RealTimeCommand(sublime_plugin.EventListener):
     def __init__(self):
         self.variables = {}
-        self.operators = ["+", "-", "/", "*"]
+        self.operators = ["+", "-", "/", "*", "%"]
         self.mouseDown = True
 
     def on_done(self, index):
         print (index)
 
-    def handle_assignment(self, var, val):
-        """Assigns a variable for the first time or a variable that has changed types"""
+    def convertType(self, val):
+        """Converts a string from the file to the proper type for assignment"""
+
         if "'" in val or '"' in val:
             val = str(val.replace('"', "").replace("'", ""))
 
@@ -33,19 +34,23 @@ class RealTimeCommand(sublime_plugin.EventListener):
                     val = float(val)
                 except:
                     return
+        return val
 
-        self.variables[var] = val
+    def handle_assignment(self, var, val):
+        """Assigns a variable for the first time or a variable that has changed types"""
+        self.variables[var] = self.convertType(val)
 
 
     def handle_modification(self, var, val, op):
         """Handles operations conducted on an existing variable"""
-        if (isinstance(self.variables[var], int) or isinstance(self.variables[var], float)) and str(self.variables[var] not in ["True", "False"]):
+        if (isinstance(self.variables[var], int) or isinstance(self.variables[var], float)) and str(self.variables[var]) not in ["True", "False"]:
+
             if op:
                 val = var + op + val
             val = val.replace(var, "self.variables[var]")
             self.variables[var] = eval(val)
 
-        elif isinstance(self.variables[var], str):
+        elif isinstance(self.variables[var], str) or isinstance(self.variables[var], list):
             oldVal = val
 
             if op:
@@ -61,6 +66,13 @@ class RealTimeCommand(sublime_plugin.EventListener):
                     self.variables[var] = "Error on line: " + var + "=" + oldVal + ". Check for type errors"
 
 
+    def fillLine(self, val):
+        """Replaces all variables in the line with previously defined variable values from the local dict"""
+
+        for key in self.variables.keys(): # replace previously defined vars
+            if key in val:
+                val = val.replace(key, str(self.variables[key]))
+        return val
 
     def on_selection_modified_async(self, view):
         selection = view.substr(view.word(view.sel()[0]))
@@ -75,7 +87,7 @@ class RealTimeCommand(sublime_plugin.EventListener):
                 line = str(line.replace("\n", "").replace(" ", ""))
                 line = re.sub('\s+', "", line)
 
-                if line.startswith("#"):
+                if line.startswith("#") or line == "": # comment or blank
                     continue
 
                 if "=" in line and "==" not in line:  # assignment
@@ -94,6 +106,7 @@ class RealTimeCommand(sublime_plugin.EventListener):
                             op = var[len(var) - 1] # else it is one of *=, +=, -=, /=
                         var = var.replace(op, "")
 
+                    val = self.fillLine(val)
 
                     if var in self.variables:
                         oldVal = val
@@ -107,11 +120,26 @@ class RealTimeCommand(sublime_plugin.EventListener):
                             break
 
                     # if a value for the variable is stored && type hasn't changed
+
                     if not assign:  
                         self.handle_modification(var, val, op)              
                     else: 
                         self.handle_assignment(var, val) # assign for first time or re-assign completely
 
+                # not assign then function call (assumed for now)
+
+                else:
+                    var = line.split(".")[0]
+
+                    line = self.fillLine(line)
+
+                    if (var in self.variables):  # support list append method
+                        if isinstance(self.variables[var], list):
+                            if "append" in line:
+                                line = line.split("(")
+                                toAppend = line[1].replace(")", "")
+                                self.variables[var].append(self.convertType(toAppend))
+
             if selection in self.variables:
                 print(selection + " = " + str(self.variables[selection]))
-            #view.show_popup_menu([str(self.variables[selection])], self.on_done)
+               # view.show_popup_menu([selection + " = " + str(self.variables[selection])], self.on_done)
